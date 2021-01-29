@@ -31,12 +31,19 @@
 
 // Define the minimum and maximum PWM values for all the meters.
 // These values can be used to calibrate the meters.
-#define MINIMUM_PWM_VALUE_HOUR 15
-#define MAXIMUM_PWM_VALUE_HOUR 240
-#define MINIMUM_PWM_VALUE_MIN 15
-#define MAXIMUM_PWM_VALUE_MIN 254
-#define MINIMUM_PWM_VALUE_SEC 15
-#define MAXIMUM_PWM_VALUE_SEC 240
+#define MINIMUM_PWM_VALUE_HOUR 8
+#define MAXIMUM_PWM_VALUE_HOUR 254
+#define MINIMUM_PWM_VALUE_MIN 8
+#define MAXIMUM_PWM_VALUE_MIN 237
+#define MINIMUM_PWM_VALUE_SEC 8
+#define MAXIMUM_PWM_VALUE_SEC 254
+
+// Define delay  for easier calibration
+#define CALIBRATION_DELAY 1000
+
+// Define if Hour scale is 1 through 12 with hard stops on each hour
+// or 0 through 12 with gradual movement of the hand
+#define SMOOTH_HOUR true
 
 // Create the real time clock instance.
 RTC_DS1307 rtc;
@@ -50,24 +57,28 @@ RTC_DS1307 rtc;
  * @param uint8_t min  The meter's minimum PWM value.
  * @param uint8_t max  The meter's maximum PWM value.
  */
-void animateMeter(uint8_t pin, uint8_t min, uint8_t max) {
+void animateMeter(uint8_t pin, uint8_t min, uint8_t max)
+{
   uint8_t v;
-  for (v = min; v <= max; v++) {
+  for (v = min; v <= max; v++)
+  {
     analogWrite(pin, v);
     delay(2);
   }
-  delay(100);
-  for (v = max; v >= min; v--) {
+  delay(CALIBRATION_DELAY);
+  for (v = max; v >= min; v--)
+  {
     analogWrite(pin, v);
     delay(2);
   }
-  delay(100);
+  delay(CALIBRATION_DELAY);
 }
 
 /**
  * Run the startup sequence by animating all three meters sequentially.
  */
-void startSequence() {
+void startSequence()
+{
   animateMeter(PIN_METER_HOUR, MINIMUM_PWM_VALUE_HOUR, MAXIMUM_PWM_VALUE_HOUR);
   animateMeter(PIN_METER_MIN, MINIMUM_PWM_VALUE_MIN, MAXIMUM_PWM_VALUE_MIN);
   animateMeter(PIN_METER_SEC, MINIMUM_PWM_VALUE_SEC, MAXIMUM_PWM_VALUE_SEC);
@@ -76,7 +87,8 @@ void startSequence() {
 /**
  * The method to update the time displayed on the the meter.
  */
-void displayTime() {
+void displayTime()
+{
   // Retrieve the time from the real time clock.
   DateTime now = rtc.now();
 
@@ -85,11 +97,22 @@ void displayTime() {
   // For minutes and seconds we can just directly use the
   // properties on the 'now' object. No need to store those
   // in a temporary variable.
-  int8_t h = (now.hour() == 0 || now.hour() == 12) ? 12 : now.hour() % 12;
+  int8_t h;
 
   // Convert the time values to PWM values by using map ...
   // and set that value as the PWM value using analogWrite.
-  analogWrite(PIN_METER_HOUR, map(h, 1, 12, MINIMUM_PWM_VALUE_HOUR, MAXIMUM_PWM_VALUE_HOUR));
+  if (SMOOTH_HOUR == true)
+  {
+    h = (now.hour() == 0 || now.hour() == 12) ? 0 : now.hour() % 12;
+    // multiply each hour (h) by 60 then add number of current minutes
+    // and map them to a range between 0 and 720 minutes (12 hours * 60 min)
+    analogWrite(PIN_METER_HOUR, map(h * 60 + now.minute(), 0, 720, MINIMUM_PWM_VALUE_HOUR, MAXIMUM_PWM_VALUE_HOUR));
+  }
+  else
+  {
+    h = (now.hour() == 0 || now.hour() == 12) ? 12 : now.hour() % 12;
+    analogWrite(PIN_METER_HOUR, map(h, 1, 12, MINIMUM_PWM_VALUE_HOUR, MAXIMUM_PWM_VALUE_HOUR));
+  }
   analogWrite(PIN_METER_MIN, map(now.minute(), 0, 60, MINIMUM_PWM_VALUE_MIN, MAXIMUM_PWM_VALUE_MIN));
   analogWrite(PIN_METER_SEC, map(now.second(), 0, 60, MINIMUM_PWM_VALUE_SEC, MAXIMUM_PWM_VALUE_SEC));
 
@@ -105,7 +128,8 @@ void displayTime() {
 /**
  * The setup method used by the Arduino.
  */
-void setup () {
+void setup()
+{
   // Initiate the serial port for debugging purposes.
   Serial.begin(9600);
 
@@ -122,7 +146,8 @@ void setup () {
   // If the real time clock is not running,
   // for example after the battery was replaced,
   // start it by setting the time.
-  if (!rtc.isrunning()) {
+  if (!rtc.isrunning())
+  {
     rtc.adjust(DateTime(2018, 6, 17, 0, 0, 0));
   }
 
@@ -133,48 +158,51 @@ void setup () {
 /**
  * The main runloop used by the Arduino.
  */
-void loop () {
-    // Update the meters by calling the `displayTime()` method.
+void loop()
+{
+  // Update the meters by calling the `displayTime()` method.
+  displayTime();
+
+  // Check if we pressed the button to adjust the hour ...
+  // Repeat the following loop for as long as we hold this button.
+  while (!digitalRead(PIN_BUTTON_HOUR))
+  {
+    // Grab the current time.
+    DateTime now = rtc.now();
+
+    // Set the RTC time by using the current time and increaing the hour by one.
+    // By using the % 24, it will automaticly overflow to 0 when it reaches 24.
+    // The seconds are simply reset.
+    rtc.adjust(DateTime(now.year(), now.month(), now.day(), (now.hour() + 1) % 24, now.minute(), 0));
+
+    // Update the display to reflect the changes.
     displayTime();
 
-    // Check if we pressed the button to adjust the hour ...
-    // Repeat the following loop for as long as we hold this button.
-    while (!digitalRead(PIN_BUTTON_HOUR)) {
-      // Grab the current time.
-      DateTime now = rtc.now();
+    // Wait half a second before we check again to see
+    // if the button is still pressed.
+    delay(500);
+  }
 
-      // Set the RTC time by using the current time and increaing the hour by one.
-      // By using the % 24, it will automaticly overflow to 0 when it reaches 24.
-      // The seconds are simply reset.
-      rtc.adjust(DateTime(now.year(), now.month(), now.day(), (now.hour() + 1) % 24, now.minute(), 0));
+  // Check if we pressed the button to adjust the minutes ...
+  // Repeat the following loop for as long as we hold this button.
+  while (!digitalRead(PIN_BUTTON_MIN))
+  {
+    // Grab the current time.
+    DateTime now = rtc.now();
 
-      // Update the display to reflect the changes.
-      displayTime();
+    // Set the RTC time by using the current time and increaing the minutes by one.
+    // By using the % 60, it will automaticly overflow to 0 when it reaches 60.
+    // The seconds are simply reset.
+    rtc.adjust(DateTime(now.year(), now.month(), now.day(), now.hour(), (now.minute() + 1) % 60, 0));
 
-      // Wait half a second before we check again to see
-      // if the button is still pressed.
-      delay(500);
-    }
+    // Update the display to reflect the changes.
+    displayTime();
 
-    // Check if we pressed the button to adjust the minutes ...
-    // Repeat the following loop for as long as we hold this button.
-    while (!digitalRead(PIN_BUTTON_MIN)) {
-      // Grab the current time.
-      DateTime now = rtc.now();
+    // Wait a quarter of a second before we check again to see
+    // if the button is still pressed.
+    delay(250);
+  }
 
-      // Set the RTC time by using the current time and increaing the minutes by one.
-      // By using the % 60, it will automaticly overflow to 0 when it reaches 60.
-      // The seconds are simply reset.
-      rtc.adjust(DateTime(now.year(), now.month(), now.day(), now.hour(), (now.minute() + 1) % 60, 0));
-
-      // Update the display to reflect the changes.
-      displayTime();
-
-      // Wait a quarter of a second before we check again to see
-      // if the button is still pressed.
-      delay(250);
-    }
-
-    // Wait for 1 second before we start all over again.
-    delay(1000);
+  // Wait for 1 second before we start all over again.
+  delay(1000);
 }
